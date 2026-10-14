@@ -34,7 +34,27 @@ Each sector has a terminal with a puzzle for both agents, followed by a jump cou
 - **Moving blocks** slide back and forth and carry whoever stands on them.
 - **Crumbling blocks** break 3 seconds after someone lands on them. A countdown shows how long is left.
 - **Spikes** sit on some platforms and line the whole pit floor.
-- **Wrong answers** are accepted without a hint, but the last two solid blocks of the course turn hollow. Something lives under them.
+- **Wrong answers** are accepted without any clue, but the last two solid blocks of the course turn hollow. Something lives under them.
+
+## Scoring
+
+Your score starts at 0 and can go below zero.
+
+| Event | Points |
+|---|---|
+| Clear a sector | +500 |
+| Speed bonus | up to +900, minus 6 for every second spent in the sector |
+| Clean solve (right on the first try, no check or hint) | +200 |
+| Reach extraction | +2 for every second left on the clock |
+| Missed jump (pit or spikes) | −50 |
+| Wrong answer | −150 for each agent who was wrong |
+| Check answer | −100 |
+| Hint | −200 per agent |
+
+- **Wrong answers cost you later.** The penalty stays hidden until the snake gets you. If you fix the answer first, the penalty is taken when you leave the sector.
+- **Check answer** shows whether each agent's current answer is right without submitting it. It costs less than a wrong answer.
+- **Hints** cost more than a check but less than the snake.
+- The end screen shows a breakdown of your score and your best score in this browser.
 
 ## Notes
 
