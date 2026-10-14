@@ -123,6 +123,11 @@
   textarea.edit{width:100%;height:330px;background:#010502;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px;font:15px/1.5 Consolas,monospace;resize:vertical;tab-size:4}
   textarea.edit:focus{outline:none;border-color:var(--cyan)}
   .imgs.one{grid-template-columns:1fr 1fr}
+  .assist{max-width:1200px;margin:16px auto 0;padding:12px 14px;background:#071209;border:1px solid var(--line);border-left:3px solid var(--cyan);border-radius:6px}
+  .assist .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .assist .sc{font:bold 16px Consolas,monospace;margin-right:auto} .assist .sc.neg{color:var(--red)}
+  .assist .out{margin-top:8px;font-size:14px} .assist .out div{margin-top:4px}
+  .endtbl{margin:6px auto 14px;border-collapse:collapse;font-size:14px;text-align:left} .endtbl td{padding:3px 12px;border-bottom:1px solid var(--line)} .endtbl td:last-child{text-align:right;font-weight:bold}
   .ansrow2{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px} .ansrow2 label{margin:0}
   .ansrow2 input{width:120px;font-size:16px}
 </style>
@@ -150,6 +155,7 @@
       <li><b>Every sector has a terminal.</b> Solve it together. The terminal accepts any answer; a wrong one leaves hollow blocks on the final stretch, and something lives under them.</li>
       <li><b>Every route is a jump course.</b> Moving blocks, spikes, and crumbling blocks that break 3 seconds after you land. A timer shows when.</li>
       <li><b>Watch for</b> jump pads and laser gates that only open while one agent holds a switch.</li>
+      <li><b>Score.</b> Clear sectors fast for more points. Missed jumps and wrong answers cost points, and you only find out what a wrong answer cost when the snake gets you. In a puzzle you can pay to check your answer or buy a hint. The score can go below zero.</li>
     </ol>
     <div class="ctl">
       <div><b class="info">Agent 1</b> &nbsp; A / D move · W jump · <b>E</b> terminal</div>
@@ -161,7 +167,7 @@
     <div class="hazard bot"></div>
   </div>
 </div>
-<div id="end" class="screen hidden"><div class="box"><div class="hazard"></div><div class="ep" id="endE"></div><h1 id="endT" class="small"></h1><p id="endP"></p><button id="endBtn" class="primary">RUN AGAIN</button><div class="hazard bot"></div></div></div>
+<div id="end" class="screen hidden"><div class="box"><div class="hazard"></div><div class="ep" id="endE"></div><h1 id="endT" class="small"></h1><p id="endP"></p><div id="endS"></div><button id="endBtn" class="primary">RUN AGAIN</button><div class="hazard bot"></div></div></div>
 
 <div id="puz" class="hidden">
   <div id="tabbar">
@@ -191,6 +197,21 @@ const useKey=c=>c==='KeyE'?0:(c==='Enter'||c==='NumpadEnter')?1:-1;
 /* ================= shared state ================= */
 let mode=null, running=false, over=false, tStart=0, tEnd=0, now=0, xray=false;
 const stats={resets:0,bites:0};
+/* ---- points ----
+   gains:  sector clear +500, speed bonus up to +900 (−6 per second spent in the sector),
+           clean solve +200 (right first try, no check or hint), extraction +2 per second left on the clock
+   losses: missed jump −50, wrong answer −150 per agent who was wrong (kept hidden until the snake strikes),
+           check answer −100, hint −200 (check < hint < snake) */
+const PTS={CLEAR:500,SPEED:900,SPEED_PER_S:6,CLEAN:200,TIME_LEFT_PER_S:2,FALL:50,WRONG:150,CHECK:100,HINT:200};
+let score=0, pending=0, best=null, ledger={}, pops=[], sec={t0:0,tries:0,assist:false};
+function freshLedger(){ return {clear:0,speed:0,clean:0,timeLeft:0,falls:0,wrong:0,checks:0,hints:0}; }
+function addPts(v,label,key){
+  if(!v) return; score+=v; ledger[key]+=v;
+  pops.push({text:(v>0?'+':'−')+Math.abs(v)+'  '+label,col:v>0?'#b6ff3b':'#ff3b3b',t0:performance.now()});
+  if(pops.length>6) pops.shift();
+  const el=document.querySelector('.assist .sc'); if(el){ el.textContent='SCORE '+score; el.classList.toggle('neg',score<0); }
+}
+function revealPending(){ const v=pending; pending=0; if(v) addPts(-v,'WRONG ANSWER','wrong'); return v; }
 const down=new Set();
 const elapsed=()=>((over?tEnd:now)-tStart)/1000;
 const SERIF='"Times New Roman",Georgia,serif';
@@ -225,6 +246,14 @@ function drawHUD(left,right){
   ctx.font='9px Consolas'; ctx.textAlign='right'; ctx.fillText(crit?'CRITICAL':'ACTIVE',bx+292,14);
   ctx.textAlign='right'; ctx.font='13px Consolas,monospace'; ctx.fillStyle='#7fbf95'; ctx.fillText(right,VW-14,24);
   ctx.textAlign='left';
+}
+function drawScore(){
+  ctx.textAlign='right'; ctx.font='11px Consolas,monospace'; ctx.fillStyle='#7fbf95'; ctx.fillText('SCORE',VW-110,24);
+  ctx.font='bold 22px Consolas,monospace'; ctx.fillStyle=score<0?'#ff3b3b':'#b6ff3b'; ctx.fillText(String(score),VW-14,27);
+  const t=performance.now(); pops=pops.filter(p=>t-p.t0<2600);
+  pops.forEach((p,i)=>{ const k=(t-p.t0)/2600; ctx.globalAlpha=Math.min(1,(1-k)*2.5); ctx.font='bold 15px Consolas,monospace'; ctx.fillStyle=p.col;
+    ctx.fillText(p.text,VW-14,64+i*22-k*10); });
+  ctx.globalAlpha=1; ctx.textAlign='left';
 }
 function drawFooter(t){ ctx.textAlign='center'; ctx.font='12px Consolas,monospace'; ctx.fillStyle='#7fbf95'; ctx.fillText(t,VW/2,VH-8); ctx.textAlign='left'; }
 // Eva-style alert box: hazard edge, heavy serif headline, monospace detail lines
@@ -323,7 +352,7 @@ function buildStage(i){
   exitB=rect(c,GR,11,6,'exit'); rect(c+11,-5,1,40);
   worldW=(c+12)*T; term={x:cpB.x+cpB.w/2,y:GY};
 }
-function loadStage(i){ stage=i; profile='awaiting'; accepted=false; cpIndex=0; stageT=0; laserOpen=false; buildStage(i); respawn(false); banner='SECTOR '+(i+1)+' / '+META.length+'\n'+META[i].name; bannerT=2.4; }
+function loadStage(i){ sec={t0:elapsed(),tries:0,assist:false}; pending=0; stage=i; profile='awaiting'; accepted=false; cpIndex=0; stageT=0; laserOpen=false; buildStage(i); respawn(false); banner='SECTOR '+(i+1)+' / '+META.length+'\n'+META[i].name; bannerT=2.4; }
 function respawn(msg){
   const sx=cpIndex===0?60:cpB.x+40; P[0].x=sx; P[1].x=sx+44;
   P.forEach(p=>{p.y=GY-PH-1;p.vx=p.vy=0;p.onGround=false;p.ground=null;p.coy=0;p.buf=0;});
@@ -390,7 +419,8 @@ function update(dt){
     if(b.state==='bite'){ b.t+=dt; if(b.t>=BITE_DELAY){
       b.state='gone'; b.gt=0; spawnDebris(b);
       const victims=P.filter(p=>p.x+PW>b.x&&p.x<b.x+b.w&&p.y+PH>=b.y-6&&p.y+PH<=b.y+T);
-      if(victims.length&&!eat){ victims.forEach(p=>p.eaten=true); eat={t:0,b}; banner='THE SNAKE ATE YOU\nyou gave the wrong answer · try again'; bannerT=2.4; }
+      if(victims.length&&!eat){ victims.forEach(p=>p.eaten=true); eat={t:0,b}; addPts(-PTS.FALL,'MISSED JUMP','falls'); const lost=revealPending()+PTS.FALL;
+        banner='THE SNAKE ATE YOU\nyou gave the wrong answer · try again\n−'+lost+' POINTS'; bannerT=2.4; }
     } } else if(b.state==='gone') b.gt+=dt;
   }
   for(const b of breaks){
@@ -398,11 +428,15 @@ function update(dt){
     else if(b.state==='gone'){ b.gt+=dt; if(b.gt>4&&!P.some(p=>overlap(p,b))){ b.state='ok'; b.t=0; } }
   }
   debris.forEach(d=>{ d.vy+=GRAV*dt; d.x+=d.vx*dt; d.y+=d.vy*dt; d.r+=d.vr*dt; }); debris=debris.filter(d=>d.y<KILL_Y+100);
-  if(P.some(p=>p.y>KILL_Y||spikes.some(s=>hitSpike(p,s)))){ stats.resets++; respawn(true); return; }
+  if(P.some(p=>p.y>KILL_Y||spikes.some(s=>hitSpike(p,s)))){ stats.resets++; addPts(-PTS.FALL,'MISSED JUMP','falls'); respawn(true); return; }
   if(cpIndex<1&&P.every(p=>p.ground===cpB)){ cpIndex=1; banner='CHECKPOINT REACHED'; bannerT=1.5; }
   if(P.every(p=>p.ground===exitB)){
     trans={t:3.4};
-    banner=META[stage].seal+' COMMITTED';
+    const secs=Math.round(elapsed()-sec.t0), speed=Math.max(0,Math.round((PTS.SPEED-PTS.SPEED_PER_S*secs)/10)*10), clean=sec.tries===1&&!sec.assist;
+    addPts(PTS.CLEAR,'SECTOR CLEARED','clear'); addPts(speed,'SPEED BONUS','speed'); if(clean) addPts(PTS.CLEAN,'CLEAN SOLVE','clean');
+    const owed=revealPending();
+    const tl=stage===LAST?Math.max(0,LIMIT-Math.floor(elapsed()))*PTS.TIME_LEFT_PER_S:0; if(tl) addPts(tl,'TIME LEFT','timeLeft');
+    banner=META[stage].seal+' COMMITTED\ncleared in '+secs+'s · +'+(PTS.CLEAR+speed+(clean?PTS.CLEAN:0)+tl)+(owed?'  −'+owed+' wrong answer':'')+'\nscore '+score;
     bannerT=99;
   }
 }
@@ -547,15 +581,47 @@ function draw(){
     ctx.strokeStyle='rgba(0,0,0,.35)'; ctx.strokeRect(p.x+5,p.y+5,PW-10,PH-10); ctx.fillStyle='#020403'; ctx.fillRect(p.x+(p.face>0?12:4),p.y+9,5,5);
     ctx.fillStyle=p.color; ctx.font='10px Consolas,monospace'; ctx.fillText('A'+p.id,p.x+2,p.y-5); }
   ctx.restore();
-  drawHUD('SECTOR '+(stage+1)+'/'+META.length+' · '+META[stage].name,'resets '+stats.resets);
+  drawHUD('SECTOR '+(stage+1)+'/'+META.length+' · '+META[stage].name,'');
+  drawScore();
   drawFooter('AGENT 1: A/D move · W jump · E terminal      AGENT 2: ←/→ move · ↑ jump · Enter terminal      F fullscreen');
   if(bannerT>0||trans) drawBanner(banner+(trans?'\n'+(stage===LAST?'extracting…':'next sector loading…'):''),VH/2-170,trans?'#b6ff3b':banner.startsWith('THE SNAKE')?'#ff3b3b':'#ff8c1a').draw(VW/2);
 }
 
 /* ---------------- puzzle tab ---------------- */
 function openPuzzle(){ clearTimeout(closeTimer); Tab.show('Puzzle '+(stage+1)+' — '+META[stage].title,META[stage].url,()=>clearTimeout(closeTimer)); renderPuzzle(); }
-function renderPuzzle(){ const c=$('pcontent'); c.innerHTML=''; [puz1,puz2,puz3,puz4][stage](c); }
+function renderPuzzle(){ const c=$('pcontent'); c.innerHTML=''; [puz1,puz2,puz3,puz4][stage](c); assistBar(c); }
 function setMsg(el,st,text,cls){ st.msg=text; st.cls=cls; el.className='msg '+cls; el.textContent=text; }
+// [agent 1 correct, agent 2 correct] for the current inputs of each sector
+const EVAL=[
+  st=>[_hh(st.c1.join('').toUpperCase())===_a7[0], _hh(st.c2.join('').toUpperCase())===_a7[1]],
+  st=>{ const mt=/\bif\s*\(([^)]*)\)/.exec(st.code); return [!!st.flag&&_hh(st.flag)===_a7[2], !!mt&&_hh('if('+mt[1].replace(/\s+/g,'')+')')===_a7[3]]; },
+  st=>[_hh(st.r1.join(','))===_a7[4], _hh(st.r2.join(','))===_a7[5]],
+  st=>[_hh(normOut(st.p1))===_a7[6], _hh(normOut(st.p2))===_a7[7]],
+];
+const HINTS=[
+  ['O and N sit in the middle of the alphabet. Count up from C = 67 one letter at a time: D = 68, E = 69 …','All three letters are near the end. Count back from Z = 90: Y = 89, X = 88 …'],
+  ['Read the date in each watermark. Can a month be 13?','In C, = stores a value and == compares two values. Look closely at the if.'],
+  ['Linear search looks at every card until it reaches the target, and the target itself counts too.','The first mid is floor((0 + 19) / 2) = 9. Click idx 9 first, then follow the rule.'],
+  ['Work out what one pass of the for loop adds to i (the while runs 4 times), then multiply by the number of passes.','The middle if (x >= 0) is always true. Only the outer and the inner if change x.'],
+];
+// a wrong answer is accepted silently; its cost stays hidden until the snake strikes (or the sector ends)
+function submitAnswer(m,st){
+  const [a,b]=EVAL[stage](st); if(!accepted){ sec.tries++; pending+=PTS.WRONG*((a?0:1)+(b?0:1)); }
+  applyOutcome(a&&b?'correct':(a||b)?'near':'wrong'); submitted(m,st);
+}
+function assistBar(c){
+  const st=PUZ[stage]; st.hints=st.hints||[false,false]; st.chk=st.chk||null;
+  const d=document.createElement('div'); d.className='assist';
+  d.innerHTML=`<div class="row"><span class="sc${score<0?' neg':''}">SCORE ${score}</span>
+    <button class="ck">Check answer (−${PTS.CHECK})</button><button class="h1">Hint · Agent 1 (−${PTS.HINT})</button><button class="h2">Hint · Agent 2 (−${PTS.HINT})</button></div><div class="out"></div>`;
+  const out=d.querySelector('.out');
+  const paint=()=>{ out.innerHTML=(st.chk?`<div>Check: Agent 1 <b class="${st.chk[0]?'ok':'bad'}">${st.chk[0]?'✔ correct':'✘ wrong'}</b> · Agent 2 <b class="${st.chk[1]?'ok':'bad'}">${st.chk[1]?'✔ correct':'✘ wrong'}</b> <span style="color:var(--dim)">(for the answers on screen at that moment)</span></div>`:'')
+      +st.hints.map((h,i)=>h?`<div><b class="${i?'p2c':'p1c'}">Hint · Agent ${i+1}:</b> ${HINTS[stage][i]}</div>`:'').join('');
+    d.querySelector('.h1').disabled=st.hints[0]; d.querySelector('.h2').disabled=st.hints[1]; };
+  d.querySelector('.ck').onclick=()=>{ addPts(-PTS.CHECK,'ANSWER CHECK','checks'); sec.assist=true; st.chk=EVAL[stage](st); paint(); };
+  [0,1].forEach(i=>d.querySelector('.h'+(i+1)).onclick=()=>{ if(st.hints[i]) return; addPts(-PTS.HINT,'HINT','hints'); sec.assist=true; st.hints[i]=true; paint(); });
+  paint(); const ctr=c.querySelector('.center'); c.insertBefore(d,ctr);
+}
 // every submission gets the same neutral message: no hint about correctness
 function submitted(m,st){
   setMsg(m,st,'Answer submitted. The route is updating…','info');
@@ -589,8 +655,7 @@ function puz1(c){
     <div class="center"><button id="sub" class="primary">Sign in both agents</button><span id="m" class="msg" style="margin:0"></span></div>`;
   const m=c.querySelector('#m'); setMsg(m,st,st.msg,st.cls);
   const boxes=[...c.querySelectorAll('input.cbox')];
-  const submit=()=>{ const ok1=_hh(st.c1.join('').toUpperCase())===_a7[0], ok2=_hh(st.c2.join('').toUpperCase())===_a7[1];
-    applyOutcome(ok1&&ok2?'correct':(ok1||ok2)?'near':'wrong'); submitted(m,st); };
+  const submit=()=>submitAnswer(m,st);
   boxes.forEach((el,n)=>{ const arr=el.dataset.i==='0'?st.c1:st.c2, j=+el.dataset.j; el.value=arr[j];
     el.oninput=()=>{ el.value=el.value.toUpperCase().replace(/[^A-Z]/g,'').slice(0,1); arr[j]=el.value; if(el.value&&boxes[n+1]&&boxes[n+1].dataset.i===el.dataset.i) boxes[n+1].focus(); };
     el.onkeydown=e=>{ if(e.key==='Enter') submit(); else if(e.key==='Backspace'&&!el.value&&n>0&&boxes[n-1].dataset.i===el.dataset.i) boxes[n-1].focus(); }; });
@@ -656,9 +721,7 @@ function puz2(c){
     box.appendChild(card);
   });
   const ta=c.querySelector('#code'); ta.value=st.code; ta.oninput=()=>st.code=ta.value;
-  c.querySelector('#sub').onclick=()=>{
-    const ok1=!!st.flag&&_hh(st.flag)===_a7[2], mt=/\bif\s*\(([^)]*)\)/.exec(st.code), ok2=!!mt&&_hh('if('+mt[1].replace(/\s+/g,'')+')')===_a7[3];
-    applyOutcome(ok1&&ok2?'correct':(ok1||ok2)?'near':'wrong'); submitted(m,st); };
+  c.querySelector('#sub').onclick=()=>submitAnswer(m,st);
 }
 
 /* ---- Puzzle 3: card search ---- */
@@ -693,9 +756,7 @@ function puz3(c){
   const sp=c.querySelector('#sp'), m=c.querySelector('#m'); setMsg(m,st,st.msg,st.cls);
   sp.appendChild(deckPanel('p1c','AGENT 1 · LINEAR SEARCH',`Unsorted cards. Find <b>${_d1.target}</b>.<br>Start at idx 0 and check each card from the top down until it matches.`,_d1,st.r1));
   sp.appendChild(deckPanel('p2c','AGENT 2 · BINARY SEARCH',`Sorted cards. Find <b>${_d2.target}</b>.<br>low=0, high=19. Each iteration: mid = floor((low+high)/2). If the card at mid is below the target, low=mid+1. Otherwise high=mid−1.`,_d2,st.r2));
-  c.querySelector('#sub').onclick=()=>{
-    const ok1=_hh(st.r1.join(','))===_a7[4], ok2=_hh(st.r2.join(','))===_a7[5];
-    applyOutcome(ok1&&ok2?'correct':(ok1||ok2)?'near':'wrong'); submitted(m,st); };
+  c.querySelector('#sub').onclick=()=>submitAnswer(m,st);
 }
 
 /* ---- Puzzle 4: trace the loops (code is read-only) ---- */
@@ -711,7 +772,7 @@ function puz4(c){
       <div class="ansrow"><span class="pr">output&gt;</span><input type="text" data-k="${k}" autocomplete="off" spellcheck="false" aria-label="Agent ${i+1} output"></div></div>`).join('')}</div>
     <div class="center"><button id="sub" class="primary">Submit both outputs</button><span id="m" class="msg" style="margin:0"></span></div>`;
   const m=c.querySelector('#m'); setMsg(m,st,st.msg,st.cls);
-  const submit=()=>{ const ok1=_hh(normOut(st.p1))===_a7[6], ok2=_hh(normOut(st.p2))===_a7[7]; applyOutcome(ok1&&ok2?'correct':(ok1||ok2)?'near':'wrong'); submitted(m,st); };
+  const submit=()=>submitAnswer(m,st);
   c.querySelectorAll('input[data-k]').forEach(inp=>{ inp.value=st[inp.dataset.k]; inp.oninput=()=>st[inp.dataset.k]=inp.value; inp.onkeydown=e=>{ if(e.key==='Enter') submit(); }; });
   c.querySelector('#sub').onclick=submit;
   setTimeout(()=>{ const f=c.querySelector('input[data-k]'); if(f) f.focus(); },0);
@@ -757,6 +818,7 @@ document.querySelectorAll('#dev button').forEach(b=>b.onclick=()=>{
 /* ================= flow ================= */
 function startGame(){
   stats.resets=0; over=false; running=true; tStart=now; xray=false; PUZ=freshPuz(); trans=null; down.clear();
+  score=0; pending=0; pops=[]; ledger=freshLedger();
   loadStage(0); $('start').classList.add('hidden'); $('end').classList.add('hidden');
 }
 function finishGame(win){
@@ -764,6 +826,11 @@ function finishGame(win){
   const t=Math.floor(elapsed());
   $('endE').textContent=win?'STATUS: 200 — OK':'STATUS: 410 — GONE';
   $('endT').textContent=win?'AGENTS PRESERVED':'ERASURE COMPLETE'; $('endT').style.color=win?'#fff':'var(--red)';
+  const L=ledger, rows=[['Sectors cleared',L.clear],['Speed bonus',L.speed],['Clean solves',L.clean],['Time left',L.timeLeft],['Missed jumps',L.falls],['Wrong answers',L.wrong],['Answer checks',L.checks],['Hints',L.hints]];
+  try{ best=Number(localStorage.getItem('m404.best')); if(!localStorage.getItem('m404.best')||score>best){ localStorage.setItem('m404.best',score); best=null; } }catch(e){ best=null; }
+  $('endS').innerHTML=`<div class="tag" style="margin:8px 0 0">FINAL SCORE</div><div style="font:900 44px/1.1 'Times New Roman',serif;color:${score<0?'var(--red)':'#fff'}">${score}</div>
+    ${best!=null?`<div style="color:var(--dim)">best: ${best}</div>`:'<div class="ok">new best score</div>'}
+    <table class="endtbl">${rows.map(r=>`<tr><td>${r[0]}</td><td class="${r[1]<0?'bad':r[1]>0?'ok':''}">${r[1]>0?'+':''}${r[1]}</td></tr>`).join('')}</table>`;
   $('endP').textContent=win?`Both agents reached the extraction port and survived the wipe in ${Math.floor(t/60)}:${String(t%60).padStart(2,'0')} with ${stats.resets} reset(s).`:`The clock reached 00:00 in sector ${stage+1}. NEXUS-7 was erased, and both agents were deleted with it.`;
   $('end').classList.remove('hidden');
 }
@@ -787,7 +854,7 @@ function frame(t){
   ctx.restore();
   requestAnimationFrame(frame);
 }
-PUZ=freshPuz(); buildStage(0); respawn(false);
+PUZ=freshPuz(); ledger=freshLedger(); buildStage(0); respawn(false);
 requestAnimationFrame(t=>{ last=t; now=t; frame(t); });
 })();
 </script>
