@@ -59,3 +59,14 @@ Your score starts at 0 and can go below zero.
 ## Notes
 
 - The answer checks only store salted hashes, so the answers are not readable in the source.
+
+---
+
+## 👥 Contributors
+
+- **Rishi Koushik** ([@Rishi-Koushik](https://github.com/Rishi-Koushik)) - Creator & Lead Developer
+- **Antigravity** ([Google DeepMind](https://deepmind.google/)) - AI Contributor
+- **Claude** ([Anthropic](https://anthropic.com/)) - AI Contributor
+
+See [CONTRIBUTORS.md](CONTRIBUTORS.md) for full contributor details.
+
